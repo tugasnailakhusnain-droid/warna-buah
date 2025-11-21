@@ -1,0 +1,3 @@
+/*
+  Permissions-Policy: camera=(self "https://jocular-basbousa-3ef5b2.netlify.app"), microphone=()
+
