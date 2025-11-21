@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Deteksi Kesegaran Buah — HTML Only</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#fafafa; margin:0; padding:18px; color:#111; }
+    h1 { text-align:center; margin:6px 0 2px; }
+    p { text-align:center; margin:6px 0 18px; color:#444; }
+    .wrap { display:flex; justify-content:center; }
+    .center { position:relative; display:inline-block; }
+    video, canvas { width: 90vw; max-width:720px; border-radius:10px; box-shadow: 0 6px 20px rgba(0,0,0,0.12); background:#000; }
+    #badge { position:absolute; left:12px; top:10px; background:rgba(0,0,0,0.6); color:white; padding:8px 12px; border-radius:10px; font-weight:700; font-size:18px; }
+    #controls { text-align:center; margin-top:12px; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid #ddd; background:white; cursor:pointer; }
+    #hint { color:#666; margin-left:10px; font-size:13px; }
+    @media (min-width:900px){ video,canvas { max-width:940px; } }
+  </style>
+</head>
+<body>
+  <h1>Deteksi Kesegaran Buah — HTML Only</h1>
+  <p>Arahkan buah ke kotak putih di tengah. Browser akan mendeteksi dan membacakan hasil (Bahasa Indonesia).</p>
+
+  <div class="wrap">
+    <div class="center">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay" style="position:absolute; left:0; top:0;"></canvas>
+      <div id="badge">Status: Menunggu...</div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="btnToggleTTS">Matikan Suara</button>
+    <span id="hint">(Jika suara belum keluar, klik halaman sekali untuk mengizinkan audio.)</span>
+  </div>
+
+<script>
+(async () => {
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const badge = document.getElementById('badge');
+  const btn = document.getElementById('btnToggleTTS');
+
+  let ttsEnabled = true;
+  btn.onclick = () => { ttsEnabled = !ttsEnabled; btn.innerText = ttsEnabled ? "Matikan Suara" : "Nyalakan Suara"; };
+
+  // TRY: auto camera (480p preferred)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    video.srcObject = stream;
+  } catch (err) {
+    console.error("getUserMedia error:", err);
+    badge.innerText = "Tidak dapat akses kamera — periksa izin / HTTPS";
+    return;
+  }
+
+  function rgbToHsv(r,g,b){
+    r/=255; g/=255; b/=255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b);
+    let h=0, s=0, v=max;
+    const d = max-min;
+    s = max === 0 ? 0 : d/max;
+    if(d === 0) h = 0;
+    else {
+      switch(max){
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h *= 60;
+    }
+    return [h, s, v];
+  }
+
+  const synth = window.speechSynthesis;
+  let lastSpeak = "";
+  function speak(text) {
+    if(!ttsEnabled) return;
+    if(!text || text === lastSpeak) return;
+    lastSpeak = text;
+    const doSpeak = () => {
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.lang = 'id-ID';
+      utt.rate = 0.95;
+      utt.pitch = 1.15;
+      const voices = synth.getVoices();
+      let v = voices.find(x => x.lang && x.lang.startsWith('id'));
+      if(!v) v = voices.find(x => /female|woman/i.test(x.name));
+      if(v) utt.voice = v;
+      synth.cancel();
+      synth.speak(utt);
+    };
+    if(synth.getVoices().length === 0) setTimeout(doSpeak, 150);
+    else doSpeak();
+  }
+
+  function sampleCenter(box) {
+    const tmp = document.createElement('canvas');
+    tmp.width = box; tmp.height = box;
+    const tctx = tmp.getContext('2d');
+    const sx = Math.floor(video.videoWidth/2 - box/2);
+    const sy = Math.floor(video.videoHeight/2 - box/2);
+    tctx.drawImage(video, sx, sy, box, box, 0, 0, box, box);
+    const data = tctx.getImageData(0,0,box,box).data;
+    const rs=[], gs=[], bs=[];
+    for(let i=0;i<data.length;i+=16){ rs.push(data[i]); gs.push(data[i+1]); bs.push(data[i+2]); }
+    rs.sort((a,b)=>a-b); gs.sort((a,b)=>a-b); bs.sort((a,b)=>a-b);
+    const mid = Math.floor(rs.length/2);
+    return { r: rs[mid], g: gs[mid], b: bs[mid], sx: sx, sy: sy };
+  }
+
+  function classifyByHsv(h, s, v) {
+    const isRed = (h >= 345 || h <= 15) && s > 0.35 && v > 0.25;
+    const isGreen = (h >= 70 && h <= 150) && s > 0.25 && v > 0.25;
+    const isOrange = (h >= 8 && h <= 28) && s > 0.35 && v > 0.35;
+    const isYellow = (h >= 18 && h <= 45) && s > 0.28 && v > 0.45;
+
+    if(isRed || isGreen || isOrange || isYellow) return "Segar";
+    if(v < 0.30) return "Tidak Segar";
+    if(s < 0.15 && v > 0.7) return "Segar";
+    return "Tidak Segar";
+  }
+
+  function drawAndDetect() {
+    if(!video.videoWidth || !video.videoHeight) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    overlay.width = w; overlay.height = h;
+    const box = Math.max(40, Math.floor(Math.min(w,h) * 0.18));
+    const sx = Math.floor(w/2 - box/2);
+    const sy = Math.floor(h/2 - box/2);
+
+    const sample = sampleCenter(box);
+    const [hue, sat, val] = rgbToHsv(sample.r, sample.g, sample.b);
+
+    let label = classifyByHsv(hue, sat, val);
+
+    const ctx = overlay.getContext('2d');
+    ctx.clearRect(0,0,overlay.width, overlay.height);
+    ctx.strokeStyle = 'white'; ctx.lineWidth = Math.max(2, Math.round(box * 0.03));
+    ctx.strokeRect(sx, sy, box, box);
+
+    badge.innerText = 'Status: ' + label;
+    badge.style.background = 'rgba(0,0,0,0.6)';
+    badge.style.color = (label === 'Segar') ? 'lightgreen' : 'tomato';
+
+    speak(label);
+  }
+
+  setInterval(drawAndDetect, 900);
+})();
+</script>
+</body>
+</html>
